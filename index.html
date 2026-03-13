@@ -1,22 +1,456 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Nutrition Label Extractor</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nutrition Label Extractor</title>
+  <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f6f7fb;
+      color: #1f2937;
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 24px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    h1, h2 {
+      margin-top: 0;
+    }
+    input[type="file"] {
+      margin: 10px 0 16px 0;
+    }
+    button {
+      background: #111827;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 18px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .status {
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    .progress {
+      height: 14px;
+      width: 100%;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: #2563eb;
+      transition: width 0.2s ease;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+      margin-top: 16px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #d1d5db;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f3f4f6;
+      position: sticky;
+      top: 0;
+    }
+    .table-wrap {
+      max-height: 520px;
+      overflow: auto;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+    }
+    .small {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .good {
+      color: #047857;
+      font-weight: bold;
+    }
+    .warn {
+      color: #b45309;
+      font-weight: bold;
+    }
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      border-radius: 12px;
+      border: 1px solid #d1d5db;
+      padding: 12px;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+  </style>
 </head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Nutrition Label Extractor</h1>
+      <p>Upload nutrition label images, extract beverage fields, preview results, and export to Excel.</p>
 
-<body style="font-family: Arial; padding:40px">
+      <label><strong>Upload nutrition label images</strong></label><br />
+      <input id="imageInput" type="file" accept="image/*" multiple />
 
-<h1>Nutrition Label Extractor</h1>
+      <div class="small">
+        Best results: flat nutrition panel images with readable Serving Size, Calories, and Total Sugars.
+      </div>
 
-<p>Upload nutrition label images and extract beverage nutrition data.</p>
+      <div style="margin-top:18px;">
+        <button id="processBtn">Process Labels</button>
+        <button id="exportBtn" class="secondary" disabled>Export Excel</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
 
-<input type="file" multiple>
+      <div class="status" id="status">No files loaded.</div>
+      <div class="progress"><div class="bar" id="bar"></div></div>
+    </div>
 
-<br><br>
+    <div class="card">
+      <h2>Guidelines</h2>
+      <textarea id="guidelines">Serving Size: read exactly from the label.
+Servings Per Container: read from the label.
+Sugar Content (g): use Total Sugars.
+Calories per container: calories per serving × servings per container.
+Calories Per FL oz: calories per container ÷ total fluid ounces in the container.
+Volume Quantity Case: leave blank unless known from file/source.
+% Juice Content: read only if the label states a juice percentage.
+Serving Size (oz): convert serving size to ounces if needed.
+Beverage - Serving Size: same as Serving Size (oz).</textarea>
+    </div>
 
-<button>Process Labels</button>
+    <div class="card">
+      <h2>Output Preview</h2>
+      <div class="table-wrap">
+        <table id="resultsTable">
+          <thead>
+            <tr>
+              <th>Image Link</th>
+              <th>Serving Size</th>
+              <th>Servings Per Container</th>
+              <th>Sugar Content (g)</th>
+              <th>Calories per container</th>
+              <th>Calories Per FL oz</th>
+              <th>Volume Quantity Case</th>
+              <th>% Juice Content</th>
+              <th>Serving Size (oz)</th>
+              <th>Beverage - Serving Size</th>
+              <th>Confidence</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr><td colspan="12">No output yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-<p>Output will appear here.</p>
+  <script>
+    const imageInput = document.getElementById("imageInput");
+    const processBtn = document.getElementById("processBtn");
+    const exportBtn = document.getElementById("exportBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const statusEl = document.getElementById("status");
+    const barEl = document.getElementById("bar");
+    const resultsBody = document.getElementById("resultsBody");
 
+    let results = [];
+
+    function round(value, digits = 2) {
+      if (value === "" || value === null || value === undefined || isNaN(Number(value))) return "";
+      const factor = Math.pow(10, digits);
+      return Math.round(Number(value) * factor) / factor;
+    }
+
+    function normalizeText(text) {
+      return String(text || "")
+        .replace(/\r/g, "\n")
+        .replace(/\n+/g, "\n");
+    }
+
+    function extractNumber(pattern, text) {
+      const m = text.match(pattern);
+      return m ? Number(m[1]) : "";
+    }
+
+    function extractText(pattern, text) {
+      const m = text.match(pattern);
+      return m ? m[1].trim() : "";
+    }
+
+    function parseServingSize(text) {
+      const t = normalizeText(text);
+      return (
+        extractText(/serv(?:ing|\.?)\s*size\s*[:\-]?\s*([^\n]+)/i, t) ||
+        extractText(/serv(?:ing|\.?)\s*size[^\n]*?(\d+(?:\.\d+)?\s*(?:fl\s*oz|oz|ml|mL))/i, t) ||
+        ""
+      );
+    }
+
+    function parseServingSizeOz(servingSizeText, rawText) {
+      const text = `${servingSizeText}\n${rawText}`;
+
+      let m = text.match(/(\d+(?:\.\d+)?)\s*fl\s*oz/i);
+      if (m) return round(m[1], 2);
+
+      m = text.match(/(\d+(?:\.\d+)?)\s*oz\b/i);
+      if (m) return round(m[1], 2);
+
+      m = text.match(/(\d+(?:\.\d+)?)\s*m[l1]\b/i);
+      if (m) return round(Number(m[1]) * 0.033814, 2);
+
+      return "";
+    }
+
+    function parseServingsPerContainer(text) {
+      const t = normalizeText(text);
+      return (
+        extractNumber(/servings\s+per\s+container\s*[:\-]?\s*(\d+(?:\.\d+)?)/i, t) ||
+        extractNumber(/about\s*(\d+(?:\.\d+)?)\s*servings\s+per\s+container/i, t) ||
+        ""
+      );
+    }
+
+    function parseCaloriesPerServing(text) {
+      const t = normalizeText(text);
+      let val = extractNumber(/calories\s*(?:per\s*serving)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i, t);
+      if (val !== "") return val;
+
+      const lines = t.split("\n").map(x => x.trim()).filter(Boolean);
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (/^calories$/i.test(lines[i]) && /\d+/.test(lines[i + 1])) {
+          const m = lines[i + 1].match(/\d+(?:\.\d+)?/);
+          if (m) return Number(m[0]);
+        }
+      }
+      return "";
+    }
+
+    function parseSugars(text) {
+      const t = normalizeText(text);
+      return (
+        extractNumber(/total\s+sugars?\s*(\d+(?:\.\d+)?)\s*g/i, t) ||
+        ""
+      );
+    }
+
+    function parseJuice(text) {
+      const t = normalizeText(text);
+      const m = t.match(/(\d{1,3})\s*%\s*juice/i);
+      if (m) return `${m[1]}%`;
+      if (/100\s*%\s*juice/i.test(t)) return "100%";
+      return "";
+    }
+
+    function confidenceScore(row) {
+      let score = 0;
+      if (row["Serving Size"]) score += 18;
+      if (row["Servings Per Container"] !== "") score += 18;
+      if (row["Sugar Content (g)"] !== "") score += 18;
+      if (row["Calories per container"] !== "") score += 18;
+      if (row["Calories Per FL oz"] !== "") score += 10;
+      if (row["Serving Size (oz)"] !== "") score += 10;
+      if (row["% Juice Content"] !== "") score += 8;
+      return Math.min(100, score);
+    }
+
+    function deriveRow(imageName, ocrText) {
+      const servingSize = parseServingSize(ocrText);
+      const servingsPerContainer = parseServingsPerContainer(ocrText);
+      const sugar = parseSugars(ocrText);
+      const caloriesPerServing = parseCaloriesPerServing(ocrText);
+      const servingSizeOz = parseServingSizeOz(servingSize, ocrText);
+
+      const caloriesPerContainer =
+        caloriesPerServing !== "" && servingsPerContainer !== ""
+          ? round(caloriesPerServing * servingsPerContainer, 2)
+          : caloriesPerServing;
+
+      const caloriesPerFlOz =
+        caloriesPerContainer !== "" && servingSizeOz !== "" && servingsPerContainer !== ""
+          ? round(caloriesPerContainer / (servingSizeOz * servingsPerContainer), 4)
+          : caloriesPerContainer !== "" && servingSizeOz !== ""
+            ? round(caloriesPerContainer / servingSizeOz, 4)
+            : "";
+
+      const row = {
+        "Image Link": imageName,
+        "Serving Size": servingSize,
+        "Servings Per Container": servingsPerContainer,
+        "Sugar Content (g)": sugar,
+        "Calories per container": caloriesPerContainer,
+        "Calories Per FL oz": caloriesPerFlOz,
+        "Volume Quantity Case": "",
+        "% Juice Content": parseJuice(ocrText),
+        "Serving Size (oz)": servingSizeOz,
+        "Beverage - Serving Size": servingSizeOz,
+        "Confidence": 0,
+        "Notes": ""
+      };
+
+      const notes = [];
+      if (!row["Serving Size"]) notes.push("Serving size not found");
+      if (row["Servings Per Container"] === "") notes.push("Servings/container not found");
+      if (row["Sugar Content (g)"] === "") notes.push("Sugar not found");
+      if (row["Calories per container"] === "") notes.push("Calories incomplete");
+
+      row["Notes"] = notes.join("; ");
+      row["Confidence"] = confidenceScore(row);
+
+      return row;
+    }
+
+    async function preprocessImage(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const scale = Math.max(2, 1800 / Math.max(img.width, img.height));
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            const ctx = canvas.getContext("2d");
+
+            ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            resolve(canvas.toDataURL("image/png"));
+          };
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderResults() {
+      resultsBody.innerHTML = "";
+
+      if (!results.length) {
+        resultsBody.innerHTML = `<tr><td colspan="12">No output yet.</td></tr>`;
+        return;
+      }
+
+      for (const row of results) {
+        const tr = document.createElement("tr");
+        const confidenceClass = Number(row["Confidence"]) < 60 ? "warn" : "good";
+
+        tr.innerHTML = `
+          <td>${row["Image Link"] || ""}</td>
+          <td>${row["Serving Size"] || ""}</td>
+          <td>${row["Servings Per Container"] ?? ""}</td>
+          <td>${row["Sugar Content (g)"] ?? ""}</td>
+          <td>${row["Calories per container"] ?? ""}</td>
+          <td>${row["Calories Per FL oz"] ?? ""}</td>
+          <td>${row["Volume Quantity Case"] || ""}</td>
+          <td>${row["% Juice Content"] || ""}</td>
+          <td>${row["Serving Size (oz)"] ?? ""}</td>
+          <td>${row["Beverage - Serving Size"] ?? ""}</td>
+          <td class="${confidenceClass}">${row["Confidence"] ?? ""}</td>
+          <td>${row["Notes"] || ""}</td>
+        `;
+        resultsBody.appendChild(tr);
+      }
+    }
+
+    processBtn.addEventListener("click", async () => {
+      const files = Array.from(imageInput.files || []);
+      if (!files.length) {
+        statusEl.textContent = "Please upload one or more nutrition label images first.";
+        return;
+      }
+
+      processBtn.disabled = true;
+      exportBtn.disabled = true;
+      results = [];
+      renderResults();
+
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          statusEl.textContent = `Processing ${file.name} (${i + 1} of ${files.length})...`;
+
+          const cleanedImage = await preprocessImage(file);
+
+          const result = await Tesseract.recognize(cleanedImage, "eng", {
+            logger: (m) => {
+              if (m.status === "recognizing text") {
+                const overall = ((i + (m.progress || 0)) / files.length) * 100;
+                barEl.style.width = `${Math.round(overall)}%`;
+              }
+            }
+          });
+
+          const text = result.data.text || "";
+          const row = deriveRow(file.name, text);
+          results.push(row);
+          renderResults();
+        }
+
+        barEl.style.width = "100%";
+        statusEl.textContent = `Done. Processed ${files.length} image(s).`;
+        exportBtn.disabled = false;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Error: ${err.message || "Processing failed."}`;
+      } finally {
+        processBtn.disabled = false;
+      }
+    });
+
+    exportBtn.addEventListener("click", () => {
+      if (!results.length) return;
+
+      const ws = XLSX.utils.json_to_sheet(results);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Nutrition Output");
+      XLSX.writeFile(wb, "beverage_nutrition_output.xlsx");
+    });
+
+    clearBtn.addEventListener("click", () => {
+      imageInput.value = "";
+      results = [];
+      renderResults();
+      statusEl.textContent = "Cleared.";
+      barEl.style.width = "0%";
+      exportBtn.disabled = true;
+    });
+  </script>
 </body>
 </html>
