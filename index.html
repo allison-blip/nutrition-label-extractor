@@ -14,7 +14,7 @@
       color: #1f2937;
     }
     .wrap {
-      max-width: 1100px;
+      max-width: 1280px;
       margin: 32px auto;
       padding: 24px;
     }
@@ -40,6 +40,7 @@
       cursor: pointer;
       font-size: 14px;
       margin-right: 10px;
+      margin-bottom: 8px;
     }
     button:disabled {
       opacity: 0.5;
@@ -79,14 +80,16 @@
       padding: 8px;
       text-align: left;
       vertical-align: top;
+      white-space: nowrap;
     }
     th {
       background: #f3f4f6;
       position: sticky;
       top: 0;
+      z-index: 1;
     }
     .table-wrap {
-      max-height: 520px;
+      max-height: 600px;
       overflow: auto;
       border: 1px solid #d1d5db;
       border-radius: 12px;
@@ -105,7 +108,7 @@
     }
     textarea {
       width: 100%;
-      min-height: 120px;
+      min-height: 180px;
       border-radius: 12px;
       border: 1px solid #d1d5db;
       padding: 12px;
@@ -113,19 +116,31 @@
       font-size: 13px;
       box-sizing: border-box;
     }
+    .stats {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .pill {
+      background: #f3f4f6;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>Nutrition Label Extractor</h1>
-      <p>Upload nutrition label images, extract beverage fields, preview results, and export to Excel.</p>
+      <p>Upload nutrition label images, extract standard U.S. nutrition fields and business-use beverage fields, then export to Excel.</p>
 
       <label><strong>Upload nutrition label images</strong></label><br />
       <input id="imageInput" type="file" accept="image/*" multiple />
 
       <div class="small">
-        Best results: flat nutrition panel images with readable Serving Size, Calories, and Total Sugars.
+        Best results: clear, straight-on images of the full Nutrition Facts panel.
       </div>
 
       <div style="margin-top:18px;">
@@ -136,19 +151,31 @@
 
       <div class="status" id="status">No files loaded.</div>
       <div class="progress"><div class="bar" id="bar"></div></div>
+
+      <div class="stats">
+        <div class="pill" id="rowsStat">Rows: 0</div>
+        <div class="pill" id="confidenceStat">Average Confidence: 0%</div>
+        <div class="pill" id="reviewStat">Rows to Review: 0</div>
+      </div>
     </div>
 
     <div class="card">
       <h2>Guidelines</h2>
-      <textarea id="guidelines">Serving Size: read exactly from the label.
-Servings Per Container: read from the label.
-Sugar Content (g): use Total Sugars.
-Calories per container: calories per serving × servings per container.
-Calories Per FL oz: calories per container ÷ total fluid ounces in the container.
-Volume Quantity Case: leave blank unless known from file/source.
-% Juice Content: read only if the label states a juice percentage.
-Serving Size (oz): convert serving size to ounces if needed.
-Beverage - Serving Size: same as Serving Size (oz).</textarea>
+      <textarea id="guidelines">U.S. Nutrition Fields
+- Read standard Nutrition Facts panel values when present.
+- Calories should be calories per serving.
+- Total Fat, Saturated Fat, Trans Fat: capture grams only.
+- Cholesterol and Sodium: capture mg only.
+- Total Carbohydrate, Dietary Fiber, Total Sugars, Added Sugars, Protein: capture grams only.
+- Vitamin D, Calcium, Iron, Potassium: capture label value exactly when possible.
+
+Business / Derived Fields
+- Calories per container = Calories × Servings Per Container.
+- Calories Per FL oz = Calories per container ÷ total fluid ounces in the full container.
+- Serving Size (oz) should normalize fl oz, oz, or mL into ounces.
+- Beverage - Serving Size = normalized Serving Size (oz).
+- Volume Quantity Case: leave blank unless known from external source.
+- % Juice Content: only populate when the label states a specific juice percentage.</textarea>
     </div>
 
     <div class="card">
@@ -156,23 +183,10 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
       <div class="table-wrap">
         <table id="resultsTable">
           <thead>
-            <tr>
-              <th>Image Link</th>
-              <th>Serving Size</th>
-              <th>Servings Per Container</th>
-              <th>Sugar Content (g)</th>
-              <th>Calories per container</th>
-              <th>Calories Per FL oz</th>
-              <th>Volume Quantity Case</th>
-              <th>% Juice Content</th>
-              <th>Serving Size (oz)</th>
-              <th>Beverage - Serving Size</th>
-              <th>Confidence</th>
-              <th>Notes</th>
-            </tr>
+            <tr id="headerRow"></tr>
           </thead>
           <tbody id="resultsBody">
-            <tr><td colspan="12">No output yet.</td></tr>
+            <tr><td colspan="26">No output yet.</td></tr>
           </tbody>
         </table>
       </div>
@@ -180,6 +194,35 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
   </div>
 
   <script>
+    const OUTPUT_COLUMNS = [
+      "Image Link",
+      "Serving Size",
+      "Servings Per Container",
+      "Calories",
+      "Total Fat (g)",
+      "Saturated Fat (g)",
+      "Trans Fat (g)",
+      "Cholesterol (mg)",
+      "Sodium (mg)",
+      "Total Carbohydrate (g)",
+      "Dietary Fiber (g)",
+      "Total Sugars (g)",
+      "Added Sugars (g)",
+      "Protein (g)",
+      "Vitamin D",
+      "Calcium",
+      "Iron",
+      "Potassium",
+      "Calories per container",
+      "Calories Per FL oz",
+      "Volume Quantity Case",
+      "% Juice Content",
+      "Serving Size (oz)",
+      "Beverage - Serving Size",
+      "Confidence",
+      "Notes"
+    ];
+
     const imageInput = document.getElementById("imageInput");
     const processBtn = document.getElementById("processBtn");
     const exportBtn = document.getElementById("exportBtn");
@@ -187,8 +230,23 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
     const statusEl = document.getElementById("status");
     const barEl = document.getElementById("bar");
     const resultsBody = document.getElementById("resultsBody");
+    const headerRow = document.getElementById("headerRow");
+    const rowsStat = document.getElementById("rowsStat");
+    const confidenceStat = document.getElementById("confidenceStat");
+    const reviewStat = document.getElementById("reviewStat");
 
     let results = [];
+
+    function buildHeaders() {
+      headerRow.innerHTML = "";
+      OUTPUT_COLUMNS.forEach(col => {
+        const th = document.createElement("th");
+        th.textContent = col;
+        headerRow.appendChild(th);
+      });
+    }
+
+    buildHeaders();
 
     function round(value, digits = 2) {
       if (value === "" || value === null || value === undefined || isNaN(Number(value))) return "";
@@ -199,6 +257,7 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
     function normalizeText(text) {
       return String(text || "")
         .replace(/\r/g, "\n")
+        .replace(/[|]/g, " ")
         .replace(/\n+/g, "\n");
     }
 
@@ -210,6 +269,16 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
     function extractText(pattern, text) {
       const m = text.match(pattern);
       return m ? m[1].trim() : "";
+    }
+
+    function parseGenericGrams(label, text) {
+      const pattern = new RegExp(label + "\\s*(\\d+(?:\\.\\d+)?)\\s*g", "i");
+      return extractNumber(pattern, text);
+    }
+
+    function parseGenericMg(label, text) {
+      const pattern = new RegExp(label + "\\s*(\\d+(?:\\.\\d+)?)\\s*mg", "i");
+      return extractNumber(pattern, text);
     }
 
     function parseServingSize(text) {
@@ -245,8 +314,9 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
       );
     }
 
-    function parseCaloriesPerServing(text) {
+    function parseCalories(text) {
       const t = normalizeText(text);
+
       let val = extractNumber(/calories\s*(?:per\s*serving)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i, t);
       if (val !== "") return val;
 
@@ -257,13 +327,83 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
           if (m) return Number(m[0]);
         }
       }
+
       return "";
     }
 
-    function parseSugars(text) {
+    function parseTotalFat(text) {
+      return parseGenericGrams("total\\s*fat", text);
+    }
+
+    function parseSaturatedFat(text) {
+      return parseGenericGrams("sat(?:urated)?\\s*fat", text);
+    }
+
+    function parseTransFat(text) {
+      return parseGenericGrams("trans\\s*fat", text);
+    }
+
+    function parseCholesterol(text) {
+      return parseGenericMg("cholesterol", text);
+    }
+
+    function parseSodium(text) {
+      return parseGenericMg("sodium", text);
+    }
+
+    function parseTotalCarbohydrate(text) {
+      return parseGenericGrams("total\\s*carbohydrate", text);
+    }
+
+    function parseDietaryFiber(text) {
+      return parseGenericGrams("dietary\\s*fiber", text);
+    }
+
+    function parseTotalSugars(text) {
+      return parseGenericGrams("total\\s*sugars?", text);
+    }
+
+    function parseAddedSugars(text) {
       const t = normalizeText(text);
       return (
-        extractNumber(/total\s+sugars?\s*(\d+(?:\.\d+)?)\s*g/i, t) ||
+        extractNumber(/includes?\s*(\d+(?:\.\d+)?)\s*g\s*added\s*sugars?/i, t) ||
+        extractNumber(/added\s*sugars?\s*(\d+(?:\.\d+)?)\s*g/i, t) ||
+        ""
+      );
+    }
+
+    function parseProtein(text) {
+      return parseGenericGrams("protein", text);
+    }
+
+    function parseVitaminD(text) {
+      const t = normalizeText(text);
+      return (
+        extractText(/vitamin\s*d\s*([^\n]+)/i, t) ||
+        ""
+      );
+    }
+
+    function parseCalcium(text) {
+      const t = normalizeText(text);
+      return (
+        extractText(/calcium\s*([^\n]+)/i, t) ||
+        ""
+      );
+    }
+
+    function parseIron(text) {
+      const t = normalizeText(text);
+      return (
+        extractText(/iron\s*([^\n]+)/i, t) ||
+        ""
+      );
+    }
+
+    function parsePotassium(text) {
+      const t = normalizeText(text);
+      return (
+        extractText(/potassium\s*([^\n]+)/i, t) ||
         ""
       );
     }
@@ -278,42 +418,64 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
 
     function confidenceScore(row) {
       let score = 0;
-      if (row["Serving Size"]) score += 18;
-      if (row["Servings Per Container"] !== "") score += 18;
-      if (row["Sugar Content (g)"] !== "") score += 18;
-      if (row["Calories per container"] !== "") score += 18;
-      if (row["Calories Per FL oz"] !== "") score += 10;
-      if (row["Serving Size (oz)"] !== "") score += 10;
-      if (row["% Juice Content"] !== "") score += 8;
+      const majorFields = [
+        "Serving Size",
+        "Servings Per Container",
+        "Calories",
+        "Total Carbohydrate (g)",
+        "Total Sugars (g)",
+        "Protein (g)",
+        "Sodium (mg)"
+      ];
+
+      majorFields.forEach(f => {
+        if (row[f] !== "" && row[f] !== null && row[f] !== undefined) score += 10;
+      });
+
+      const secondaryFields = [
+        "Total Fat (g)",
+        "Saturated Fat (g)",
+        "Cholesterol (mg)",
+        "Calories per container",
+        "Calories Per FL oz",
+        "Serving Size (oz)",
+        "% Juice Content"
+      ];
+
+      secondaryFields.forEach(f => {
+        if (row[f] !== "" && row[f] !== null && row[f] !== undefined) score += 4;
+      });
+
       return Math.min(100, score);
     }
 
     function deriveRow(imageName, ocrText) {
       const servingSize = parseServingSize(ocrText);
       const servingsPerContainer = parseServingsPerContainer(ocrText);
-      const sugar = parseSugars(ocrText);
-      const caloriesPerServing = parseCaloriesPerServing(ocrText);
+      const calories = parseCalories(ocrText);
       const servingSizeOz = parseServingSizeOz(servingSize, ocrText);
-
-      const caloriesPerContainer =
-        caloriesPerServing !== "" && servingsPerContainer !== ""
-          ? round(caloriesPerServing * servingsPerContainer, 2)
-          : caloriesPerServing;
-
-      const caloriesPerFlOz =
-        caloriesPerContainer !== "" && servingSizeOz !== "" && servingsPerContainer !== ""
-          ? round(caloriesPerContainer / (servingSizeOz * servingsPerContainer), 4)
-          : caloriesPerContainer !== "" && servingSizeOz !== ""
-            ? round(caloriesPerContainer / servingSizeOz, 4)
-            : "";
 
       const row = {
         "Image Link": imageName,
         "Serving Size": servingSize,
         "Servings Per Container": servingsPerContainer,
-        "Sugar Content (g)": sugar,
-        "Calories per container": caloriesPerContainer,
-        "Calories Per FL oz": caloriesPerFlOz,
+        "Calories": calories,
+        "Total Fat (g)": parseTotalFat(ocrText),
+        "Saturated Fat (g)": parseSaturatedFat(ocrText),
+        "Trans Fat (g)": parseTransFat(ocrText),
+        "Cholesterol (mg)": parseCholesterol(ocrText),
+        "Sodium (mg)": parseSodium(ocrText),
+        "Total Carbohydrate (g)": parseTotalCarbohydrate(ocrText),
+        "Dietary Fiber (g)": parseDietaryFiber(ocrText),
+        "Total Sugars (g)": parseTotalSugars(ocrText),
+        "Added Sugars (g)": parseAddedSugars(ocrText),
+        "Protein (g)": parseProtein(ocrText),
+        "Vitamin D": parseVitaminD(ocrText),
+        "Calcium": parseCalcium(ocrText),
+        "Iron": parseIron(ocrText),
+        "Potassium": parsePotassium(ocrText),
+        "Calories per container": "",
+        "Calories Per FL oz": "",
         "Volume Quantity Case": "",
         "% Juice Content": parseJuice(ocrText),
         "Serving Size (oz)": servingSizeOz,
@@ -322,11 +484,29 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
         "Notes": ""
       };
 
+      if (calories !== "" && servingsPerContainer !== "") {
+        row["Calories per container"] = round(calories * servingsPerContainer, 2);
+      } else if (calories !== "") {
+        row["Calories per container"] = calories;
+      }
+
+      if (row["Calories per container"] !== "" && servingSizeOz !== "" && servingsPerContainer !== "") {
+        row["Calories Per FL oz"] = round(
+          row["Calories per container"] / (servingSizeOz * servingsPerContainer),
+          4
+        );
+      } else if (row["Calories per container"] !== "" && servingSizeOz !== "") {
+        row["Calories Per FL oz"] = round(row["Calories per container"] / servingSizeOz, 4);
+      }
+
       const notes = [];
       if (!row["Serving Size"]) notes.push("Serving size not found");
       if (row["Servings Per Container"] === "") notes.push("Servings/container not found");
-      if (row["Sugar Content (g)"] === "") notes.push("Sugar not found");
-      if (row["Calories per container"] === "") notes.push("Calories incomplete");
+      if (row["Calories"] === "") notes.push("Calories not found");
+      if (row["Total Sugars (g)"] === "") notes.push("Total sugars not found");
+      if (row["Total Carbohydrate (g)"] === "") notes.push("Total carbohydrate not found");
+      if (row["Sodium (mg)"] === "") notes.push("Sodium not found");
+      if (row["Protein (g)"] === "") notes.push("Protein not found");
 
       row["Notes"] = notes.join("; ");
       row["Confidence"] = confidenceScore(row);
@@ -345,10 +525,8 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
             canvas.width = Math.round(img.width * scale);
             canvas.height = Math.round(img.height * scale);
             const ctx = canvas.getContext("2d");
-
             ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
             resolve(canvas.toDataURL("image/png"));
           };
           img.onerror = reject;
@@ -359,34 +537,43 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
       });
     }
 
+    function updateStats() {
+      const count = results.length;
+      const avg = count
+        ? round(results.reduce((sum, row) => sum + Number(row["Confidence"] || 0), 0) / count, 1)
+        : 0;
+      const review = results.filter(row => Number(row["Confidence"] || 0) < 60).length;
+
+      rowsStat.textContent = `Rows: ${count}`;
+      confidenceStat.textContent = `Average Confidence: ${avg}%`;
+      reviewStat.textContent = `Rows to Review: ${review}`;
+    }
+
     function renderResults() {
       resultsBody.innerHTML = "";
 
       if (!results.length) {
-        resultsBody.innerHTML = `<tr><td colspan="12">No output yet.</td></tr>`;
+        resultsBody.innerHTML = `<tr><td colspan="${OUTPUT_COLUMNS.length}">No output yet.</td></tr>`;
+        updateStats();
         return;
       }
 
       for (const row of results) {
         const tr = document.createElement("tr");
-        const confidenceClass = Number(row["Confidence"]) < 60 ? "warn" : "good";
 
-        tr.innerHTML = `
-          <td>${row["Image Link"] || ""}</td>
-          <td>${row["Serving Size"] || ""}</td>
-          <td>${row["Servings Per Container"] ?? ""}</td>
-          <td>${row["Sugar Content (g)"] ?? ""}</td>
-          <td>${row["Calories per container"] ?? ""}</td>
-          <td>${row["Calories Per FL oz"] ?? ""}</td>
-          <td>${row["Volume Quantity Case"] || ""}</td>
-          <td>${row["% Juice Content"] || ""}</td>
-          <td>${row["Serving Size (oz)"] ?? ""}</td>
-          <td>${row["Beverage - Serving Size"] ?? ""}</td>
-          <td class="${confidenceClass}">${row["Confidence"] ?? ""}</td>
-          <td>${row["Notes"] || ""}</td>
-        `;
+        OUTPUT_COLUMNS.forEach(col => {
+          const td = document.createElement("td");
+          td.textContent = row[col] ?? "";
+          if (col === "Confidence") {
+            td.className = Number(row[col]) < 60 ? "warn" : "good";
+          }
+          tr.appendChild(td);
+        });
+
         resultsBody.appendChild(tr);
       }
+
+      updateStats();
     }
 
     processBtn.addEventListener("click", async () => {
@@ -436,11 +623,10 @@ Beverage - Serving Size: same as Serving Size (oz).</textarea>
 
     exportBtn.addEventListener("click", () => {
       if (!results.length) return;
-
       const ws = XLSX.utils.json_to_sheet(results);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Nutrition Output");
-      XLSX.writeFile(wb, "beverage_nutrition_output.xlsx");
+      XLSX.writeFile(wb, "american_nutrition_output.xlsx");
     });
 
     clearBtn.addEventListener("click", () => {
